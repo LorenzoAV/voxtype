@@ -5,6 +5,7 @@
 
 use crate::audio::feedback::{AudioFeedback, SoundEvent};
 use crate::audio::{self, AudioCapture};
+use crate::bridge::TranslationBridge;
 use crate::config::{ActivationMode, Config, FileMode, OutputMode};
 use crate::eager::{self, EagerConfig};
 use crate::error::Result;
@@ -2700,6 +2701,44 @@ impl Daemon {
                             final_text
                         );
                     }
+
+                    // Bridge translation: if enabled, translate between language pair
+                    let final_text = if let Some(pair) = self
+                        .config
+                        .bridge
+                        .languages()
+                        .filter(|_| self.config.bridge.enabled)
+                    {
+                        if let Some(bridge) = TranslationBridge::from_config(
+                            &self.config.bridge,
+                            self.config.whisper.remote_api_key.as_deref(),
+                            self.config.whisper.remote_endpoint.as_deref(),
+                        ) {
+                            match bridge.translate(&final_text, pair.clone()).await {
+                                Ok(translated) if !translated.is_empty() => {
+                                    tracing::info!(
+                                        "Bridge: translated ({} chars -> {} chars)",
+                                        final_text.len(),
+                                        translated.len()
+                                    );
+                                    translated
+                                }
+                                Ok(_) => {
+                                    tracing::warn!("Bridge returned empty, using original");
+                                    final_text
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Bridge failed: {}, using original", e);
+                                    final_text
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Bridge enabled but no API key, using original");
+                            final_text
+                        }
+                    } else {
+                        final_text
+                    };
 
                     // Check for output mode override from CLI flags
                     let output_override = read_output_mode_override();

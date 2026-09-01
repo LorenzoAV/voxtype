@@ -1,8 +1,8 @@
 use super::{
-    AudioConfig, CohereConfig, DolphinConfig, HotkeyConfig, MeetingConfig, MoonshineConfig,
-    OmnilingualConfig, OpenVinoConfig, OutputConfig, ParaformerConfig, ParakeetConfig, Profile,
-    SenseVoiceConfig, SonioxConfig, StatusConfig, StreamingConfig, TextConfig, TranscriptionEngine,
-    VadConfig, WhisperConfig,
+    AudioConfig, BridgeConfig, CohereConfig, DolphinConfig, HotkeyConfig, MeetingConfig,
+    MoonshineConfig, OmnilingualConfig, OutputConfig, ParaformerConfig, ParakeetConfig, Profile,
+    SenseVoiceConfig, SonioxConfig, StatusConfig, TextConfig, TranscriptionEngine, VadConfig,
+    WhisperConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,6 +21,9 @@ pub struct Config {
     pub audio: AudioConfig,
     #[serde(default)]
     pub whisper: WhisperConfig,
+    /// Translation bridge — bidirectional translation via LLM after transcription.
+    #[serde(default)]
+    pub bridge: BridgeConfig,
     #[serde(default)]
     pub output: OutputConfig,
 
@@ -57,22 +60,10 @@ pub struct Config {
     #[serde(default)]
     pub cohere: Option<CohereConfig>,
 
-    /// OpenVINO Whisper configuration (optional, only used when engine = "openvino")
-    #[serde(default)]
-    pub openvino: Option<OpenVinoConfig>,
-
     /// Soniox cloud streaming WebSocket STT configuration
     /// (optional, only used when engine = "soniox")
     #[serde(default)]
     pub soniox: Option<SonioxConfig>,
-
-    /// Shared sliding-window streaming engine tuning, used by every batch
-    /// backend wrapped in `transcribe::sliding_window` (currently `whisper`
-    /// and `openvino`). `None` when config.toml has no `[streaming]`
-    /// section, in which case each engine falls back to its own deprecated
-    /// `streaming_*` fields — see `StreamingConfig::resolve`.
-    #[serde(default)]
-    pub streaming: Option<StreamingConfig>,
 
     /// Text processing configuration (replacements, spoken punctuation)
     #[serde(default)]
@@ -116,6 +107,7 @@ impl Default for Config {
             hotkey: HotkeyConfig::default(),
             audio: AudioConfig::default(),
             whisper: WhisperConfig::default(),
+            bridge: BridgeConfig::default(),
             output: OutputConfig::default(),
             engine: TranscriptionEngine::default(),
             parakeet: None,
@@ -125,9 +117,7 @@ impl Default for Config {
             dolphin: None,
             omnilingual: None,
             cohere: None,
-            openvino: None,
             soniox: None,
-            streaming: None,
             text: TextConfig::default(),
             vad: VadConfig::default(),
             status: StatusConfig::default(),
@@ -149,12 +139,6 @@ impl Config {
     /// editing the daemon.
     pub fn streaming_active(&self) -> bool {
         match self.engine {
-            // Same sliding-window engine and the same libinput held-key
-            // hazard as OpenVino below — this arm was missing until now,
-            // which meant push-to-talk users with `[whisper] streaming =
-            // true` never got auto-promoted to toggle mode and could hit
-            // the exact stuck-recording bug this gate exists to prevent.
-            TranscriptionEngine::Whisper => self.whisper.streaming,
             TranscriptionEngine::Parakeet => {
                 self.parakeet.as_ref().map(|p| p.streaming).unwrap_or(false)
             }
@@ -167,16 +151,6 @@ impl Config {
                 .as_ref()
                 .map(|s| s.streaming && !s.async_api)
                 .unwrap_or(false),
-            // Same reasoning as Parakeet/Soniox: an absent [openvino] section
-            // means the transcriber can't initialize anyway, so don't
-            // auto-promote push-to-talk to toggle for a config that can't
-            // run. Missing this arm previously left recording permanently
-            // stuck open on the first real NPU/GPU streaming session, since
-            // typing at the cursor while a key is physically held clobbers
-            // libinput's held-key tracking on Hyprland/Sway/River.
-            TranscriptionEngine::OpenVino => {
-                self.openvino.as_ref().map(|o| o.streaming).unwrap_or(false)
-            }
             _ => false,
         }
     }
@@ -369,45 +343,8 @@ impl Config {
                 .as_ref()
                 .map(|c| c.on_demand_loading)
                 .unwrap_or(false),
-            TranscriptionEngine::OpenVino => self
-                .openvino
-                .as_ref()
-                .map(|o| o.on_demand_loading)
-                .unwrap_or(false),
             // Soniox is a cloud backend; nothing to load on demand.
             TranscriptionEngine::Soniox => false,
-        }
-    }
-
-    /// The language code configured for the active engine, if it has one.
-    ///
-    /// Engines disagree about where language lives, and several do not take a
-    /// language at all (they detect it, or are single-language). Callers that
-    /// need to adapt behaviour to language — filler-word filtering is the
-    /// first — should ask here rather than reaching into one engine's config
-    /// and being wrong for the other eight.
-    ///
-    /// Returns `None` for automatic detection and for engines without the
-    /// concept, so callers can distinguish "English" from "unknown".
-    pub fn active_language(&self) -> Option<&str> {
-        let code = match self.engine {
-            TranscriptionEngine::Whisper => match &self.whisper.language {
-                super::language::LanguageConfig::Single(code) => code.as_str(),
-                // A constrained detection set is not one language.
-                super::language::LanguageConfig::Multiple(_) => return None,
-            },
-            TranscriptionEngine::Cohere => self.cohere.as_ref().map(|c| c.language.as_str())?,
-            TranscriptionEngine::SenseVoice => {
-                self.sensevoice.as_ref().map(|s| s.language.as_str())?
-            }
-            // Parakeet, Moonshine, Paraformer, Dolphin, Omnilingual and Soniox
-            // either detect the language or are fixed to one.
-            _ => return None,
-        };
-
-        match code {
-            "" | "auto" => None,
-            other => Some(other),
         }
     }
 
@@ -450,11 +387,6 @@ impl Config {
                 .as_ref()
                 .map(|c| c.model.as_str())
                 .unwrap_or("cohere (not configured)"),
-            TranscriptionEngine::OpenVino => self
-                .openvino
-                .as_ref()
-                .map(|o| o.model.as_str())
-                .unwrap_or("openvino (not configured)"),
             TranscriptionEngine::Soniox => self
                 .soniox
                 .as_ref()

@@ -7,6 +7,7 @@
 //! 4. CLI arguments (highest priority)
 
 mod audio;
+pub mod bridge;
 mod default_config;
 mod engines;
 mod hotkey;
@@ -26,6 +27,7 @@ mod vad;
 mod whisper;
 
 pub use audio::{AudioConfig, AudioFeedbackConfig};
+pub use bridge::BridgeConfig;
 pub use default_config::{default_config_content, DEFAULT_CONFIG};
 pub use engines::{
     CohereConfig, DolphinConfig, MoonshineConfig, OmnilingualConfig, OpenVinoConfig,

@@ -69,6 +69,7 @@
 //! ```
 
 pub mod audio;
+pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod config_set;
