@@ -65,7 +65,7 @@ impl TranslationBridge {
         Some(Self {
             api_key,
             endpoint,
-            model: "llama-3.3-70b-versatile".to_string(),
+            model: "openai/gpt-oss-20b".to_string(),
             timeout: Duration::from_secs(TRANSLATION_TIMEOUT_SECS),
         })
     }
@@ -177,7 +177,7 @@ mod tests {
             pair: Some("ru:es".into()),
         };
         let tb = TranslationBridge::from_config(&bridge, Some("sk-test"), None).unwrap();
-        assert_eq!(tb.model, "llama-3.3-70b-versatile");
+        assert_eq!(tb.model, "openai/gpt-oss-20b");
         assert_eq!(tb.endpoint, "https://api.groq.com/openai");
         assert_eq!(tb.timeout, Duration::from_secs(15));
     }
