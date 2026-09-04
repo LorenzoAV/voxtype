@@ -56,3 +56,4 @@ website/docs
 # Local agent worktrees and ephemeral plans
 .claude/worktrees/
 PLAN-*.md
+VAULT.md
